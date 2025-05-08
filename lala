@@ -1,0 +1,79 @@
+from flask import request, jsonify
+from flask_restx import Namespace, Resource, fields
+import threading
+import asyncio
+from telegram_client import extract_and_send
+
+chat_ns = Namespace('chat', description='Extração de imagens')
+
+chat_body = chat_ns.model('ChatBody', {
+    'chat_id': fields.String(required=True, description='ID do grupo com -100...'),
+    'limit': fields.Integer(required=False, default=20, description='Mensagens a buscar')
+})
+
+@chat_ns.route('/extract')
+class ExtractResource(Resource):
+    @chat_ns.expect(chat_body)
+    def post(self):
+        data = request.get_json()
+        chat_id = data['chat_id']
+        limit = data.get('limit', 20)
+
+        def task():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(extract_and_send(chat_id, limit))
+            except Exception as e:
+                print(f'[ERRO THREAD][{chat_id}] {str(e)}')
+
+        threading.Thread(target=task).start()
+        return jsonify({'status': 'processing', 'chat_id': chat_id}), 202
+
+-------------
+
+from telethon import TelegramClient
+from telethon.tl.types import MessageMediaPhoto
+from io import BytesIO
+import base64
+import aiohttp
+
+api_id = 123456
+api_hash = 'abc123'
+
+async def extract_and_send(chat_id, limit):
+    client = TelegramClient(f'session_{chat_id}', api_id, api_hash)
+    try:
+        print(f'[START][{chat_id}] Conectando...')
+        await client.start()
+        print(f'[OK][{chat_id}] Client conectado.')
+
+        messages = await client.get_messages(chat_id, limit=limit)
+        print(f'[INFO][{chat_id}] Total de mensagens: {len(messages)}')
+
+        imagens = []
+        for msg in messages:
+            if msg.media and isinstance(msg.media, MessageMediaPhoto):
+                buffer = BytesIO()
+                await client.download_media(msg, buffer)
+                buffer.seek(0)
+                img_b64 = base64.b64encode(buffer.read()).decode('utf-8')
+                imagens.append({
+                    'message_id': msg.id,
+                    'image_base64': img_b64
+                })
+
+        print(f'[INFO][{chat_id}] Imagens extraídas: {len(imagens)}')
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://sua-api.com/extract", json={'images': imagens}) as resp:
+                response_data = await resp.json()
+                print(f'[OK][{chat_id}] Resposta da API: {response_data}')
+                return response_data
+
+    except Exception as e:
+        print(f'[ERRO][{chat_id}] {str(e)}')
+
+    finally:
+        await client.disconnect()
+        print(f'[FIM][{chat_id}] Client desconectado.')
