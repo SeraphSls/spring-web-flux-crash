@@ -1,0 +1,68 @@
+from telethon import TelegramClient
+import os
+
+api_id = int(os.getenv("API_ID", "123456"))
+api_hash = os.getenv("API_HASH", "abc123")
+session_name = os.getenv("SESSION_NAME", "telegram_extractor_session")
+
+client = TelegramClient(session_name, api_id, api_hash)
+
+async def start_client():
+    if not client.is_connected():
+        await client.connect()
+    if not await client.is_user_authorized():
+        raise Exception("Client não autorizado")
+    return client
+
+
+
+
+
+from io import BytesIO
+import base64
+
+async def encode_photo(msg, client):
+    buffer = BytesIO()
+    await client.download_media(msg, buffer)
+    buffer.seek(0)
+    return base64.b64encode(buffer.read()).decode('utf-8')
+
+
+
+import aiohttp
+
+async def send_images(images, url):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json={'images': images}) as resp:
+            return await resp.json()
+
+
+
+from .client import start_client
+from telethon.tl.types import MessageMediaPhoto
+from telethon.tl.functions.messages import ImportChatInviteRequest, LeaveChannelRequest
+from .utils import encode_photo
+
+async def extract_from_invite(invite_hash, limit=20, leave_after=True):
+    client = await start_client()
+    updates = await client(ImportChatInviteRequest(invite_hash))
+    chat = updates.chats[0]
+    return await extract_from_chat(chat, limit, leave_after)
+
+async def extract_from_chat(chat, limit=20, leave_after=False):
+    client = await start_client()
+    messages = await client.get_messages(chat, limit=limit)
+
+    imagens = []
+    for msg in messages:
+        if msg.media and isinstance(msg.media, MessageMediaPhoto):
+            img_b64 = await encode_photo(msg, client)
+            imagens.append({
+                'message_id': msg.id,
+                'image_base64': img_b64
+            })
+
+    if leave_after:
+        await client(LeaveChannelRequest(chat))
+
+    return imagens
