@@ -47,3 +47,83 @@ class LoginOrVerify(Resource):
         asyncio.set_event_loop(loop)
         result = loop.run_until_complete(flow())
         return jsonify(result)
+
+
+from flask import request, jsonify from flask_restx import Namespace, Resource, fields from telethon import TelegramClient from telethon.errors import SessionPasswordNeededError import asyncio import json import os
+
+Namespace para rotas de autenticação
+
+auth_ns = Namespace('auth', description='Autenticação via Telegram')
+
+Configurações fixas
+
+api_id = 123456  # substitua pelo seu api_hash = "abc123"  # substitua pelo seu session_name = "telegram_extractor_session" code_cache_path = "code_cache.json"
+
+Models
+
+request_model = auth_ns.model('RequestCode', { 'phone': fields.String(required=True, description='Telefone com +55') })
+
+verify_model = auth_ns.model('VerifyCode', { 'phone': fields.String(required=True), 'code': fields.String(required=True) })
+
+Endpoint para solicitar o código
+
+@auth_ns.route('/request_code') class RequestCode(Resource): @auth_ns.expect(request_model) def post(self): data = request.get_json() phone = data['phone']
+
+async def send_code():
+        client = TelegramClient(session_name, api_id, api_hash)
+        await client.connect()
+        sent = await client.send_code_request(phone)
+        await client.disconnect()
+
+        with open(code_cache_path, "w") as f:
+            json.dump({phone: sent.phone_code_hash}, f)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(send_code())
+        return jsonify({'status': 'code_sent'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+Endpoint para verificar o código e autenticar
+
+@auth_ns.route('/verify_code') class VerifyCode(Resource): @auth_ns.expect(verify_model) def post(self): data = request.get_json() phone = data['phone'] code = data['code']
+
+if not os.path.exists(code_cache_path):
+        return jsonify({'error': 'Nenhum código solicitado'}), 400
+
+    with open(code_cache_path, "r") as f:
+        cache = json.load(f)
+    code_hash = cache.get(phone)
+    if not code_hash:
+        return jsonify({'error': 'Hash não encontrado. Solicite o código novamente.'}), 400
+
+    async def verify():
+        client = TelegramClient(session_name, api_id, api_hash)
+        await client.connect()
+        try:
+            await client.sign_in(phone=phone, code=code, phone_code_hash=code_hash)
+            await client.disconnect()
+            return {'status': 'authenticated'}
+        except SessionPasswordNeededError:
+            await client.disconnect()
+            return {'error': '2FA habilitado. Não suportado.'}
+        except Exception as e:
+            await client.disconnect()
+            return {'error': str(e)}
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(verify())
+    return jsonify(result)
+
+Endpoint para verificar se o client está autenticado
+
+@auth_ns.route('/status') class AuthStatus(Resource): def get(self): async def check(): from telegram_client import get_client try: client = await get_client() me = await client.get_me() return { 'authorized': True, 'username': me.username or me.first_name, 'phone': me.phone } except Exception as e: return {'authorized': False, 'error': str(e)}
+
+loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(check())
+    return jsonify(result)
+
