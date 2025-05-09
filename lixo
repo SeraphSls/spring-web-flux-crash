@@ -1,0 +1,18 @@
+from telethon import TelegramClient
+import os
+
+api_id = 123456
+api_hash = 'abc123'
+session_name = 'telegram_extractor_session'
+
+_client_instance = None
+
+async def get_client():
+    global _client_instance
+    if _client_instance is None:
+        _client_instance = TelegramClient(session_name, api_id, api_hash)
+        await _client_instance.connect()
+
+    if not await _client_instance.is_user_authorized():
+        raise Exception("Client não autorizado. Faça login primeiro.")
+    return _client_instance
