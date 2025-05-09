@@ -190,3 +190,63 @@ class AuthVerify(Resource):
         asyncio.run(verify())
 
         return jsonify({'status': 'authenticated'})
+
+
+
+from flask import request, jsonify
+from flask_restx import Namespace, Resource, fields
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
+import asyncio
+
+auth_ns = Namespace('auth', description='Autenticação unificada Telegram')
+
+# Config fixo no topo
+api_id = 123456
+api_hash = 'abc123'
+session_name = 'telegram_extractor_session'
+
+# Modelo de entrada
+auth_model = auth_ns.model('AuthRequest', {
+    'phone': fields.String(required=True, description='Número com +55...'),
+    'code': fields.String(required=False, description='Código do Telegram se já recebeu')
+})
+
+@auth_ns.route('/login_or_verify')
+class AuthUnified(Resource):
+    @auth_ns.expect(auth_model)
+    def post(self):
+        data = request.get_json()
+        phone = data['phone']
+        code = data.get('code')
+
+        async def login_flow():
+            client = TelegramClient(session_name, api_id, api_hash)
+            await client.connect()
+
+            if not await client.is_user_authorized():
+                if code:
+                    try:
+                        await client.sign_in(phone=phone, code=code)
+                        await client.disconnect()
+                        return {'status': 'authenticated'}
+                    except SessionPasswordNeededError:
+                        await client.disconnect()
+                        return {'error': '2FA habilitado, requer senha'}
+                    except Exception as e:
+                        await client.disconnect()
+                        return {'error': f'Falha ao autenticar: {str(e)}'}
+                else:
+                    try:
+                        await client.send_code_request(phone)
+                        await client.disconnect()
+                        return {'status': 'code_sent', 'phone': phone}
+                    except Exception as e:
+                        await client.disconnect()
+                        return {'error': f'Erro ao enviar código: {str(e)}'}
+            else:
+                await client.disconnect()
+                return {'status': 'já autenticado'}
+
+        result = asyncio.run(login_flow())
+        return jsonify(result)
