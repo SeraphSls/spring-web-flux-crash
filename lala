@@ -164,3 +164,29 @@ class AuthVerify(Resource):
         asyncio.run(verify())
 
         return jsonify({'status': 'authenticated'})
+
+
+
+
+@auth_ns.route('/verify')
+class AuthVerify(Resource):
+    @auth_ns.expect(verify_model)
+    def post(self):
+        data = request.get_json()
+        code = data['code']
+
+        async def verify():
+            client = TelegramClient(session_name, api_id, api_hash)
+            await client.connect()
+            if not await client.is_user_authorized():
+                try:
+                    await client.sign_in(code=code)
+                    print("[OK] Autenticado com sucesso")
+                except SessionPasswordNeededError:
+                    raise Exception("2FA habilitado: requer senha")
+            await client.disconnect()
+
+        import asyncio
+        asyncio.run(verify())
+
+        return jsonify({'status': 'authenticated'})
