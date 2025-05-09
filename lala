@@ -77,3 +77,65 @@ async def extract_and_send(chat_id, limit):
     finally:
         await client.disconnect()
         print(f'[FIM][{chat_id}] Client desconectado.')
+
+
+
+
+from flask import request, jsonify
+from flask_restx import Namespace, Resource, fields
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
+import os
+
+auth_ns = Namespace('auth', description='Autenticação Telegram')
+
+api_id = 123456  # seu api_id
+api_hash = 'abc123'  # seu api_hash
+session_name = 'telegram_extractor_session'
+
+client_auth = TelegramClient(session_name, api_id, api_hash)
+
+login_model = auth_ns.model('LoginRequest', {
+    'phone': fields.String(required=True, description='Número de telefone com DDI, ex: +55...')
+})
+
+verify_model = auth_ns.model('VerifyCode', {
+    'code': fields.String(required=True, description='Código de verificação do Telegram')
+})
+
+@auth_ns.route('/login')
+class AuthLogin(Resource):
+    @auth_ns.expect(login_model)
+    def post(self):
+        data = request.get_json()
+        phone = data['phone']
+
+        async def send_code():
+            await client_auth.connect()
+            await client_auth.send_code_request(phone)
+
+        import asyncio
+        asyncio.run(send_code())
+
+        return jsonify({'status': 'code_sent', 'phone': phone})
+
+
+@auth_ns.route('/verify')
+class AuthVerify(Resource):
+    @auth_ns.expect(verify_model)
+    def post(self):
+        data = request.get_json()
+        code = data['code']
+
+        async def verify():
+            await client_auth.connect()
+            if not await client_auth.is_user_authorized():
+                try:
+                    await client_auth.sign_in(code=code)
+                except SessionPasswordNeededError:
+                    raise Exception("2FA habilitado: requer senha")
+
+        import asyncio
+        asyncio.run(verify())
+
+        return jsonify({'status': 'authenticated'})
