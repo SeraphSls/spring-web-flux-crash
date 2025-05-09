@@ -159,3 +159,22 @@ for msg in messages:
 
 await client.disconnect()
 
+
+
+from threading import Thread
+
+@chat_ns.route('/extract')
+class ExtractMedia(Resource):
+    @chat_ns.expect(extract_model)
+    def post(self):
+        data = request.get_json()
+        chat_id = data['chat_id']
+
+        def run():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(extract_task(chat_id))
+
+        Thread(target=run).start()
+
+        return '', 202
