@@ -16,3 +16,34 @@ async def get_client():
     if not await _client_instance.is_user_authorized():
         raise Exception("Client não autorizado. Faça login primeiro.")
     return _client_instance
+
+
+@auth_ns.route('/login_or_verify')
+class LoginOrVerify(Resource):
+    @auth_ns.expect(auth_model)
+    def post(self):
+        data = request.get_json()
+        phone = data['phone']
+        code = data.get('code')
+
+        async def flow():
+            client = TelegramClient(session_name, api_id, api_hash)
+            await client.connect()
+
+            if not await client.is_user_authorized():
+                if code:
+                    await client.sign_in(phone=phone, code=code)
+                    await client.disconnect()
+                    return {'status': 'authenticated'}
+                else:
+                    await client.send_code_request(phone)
+                    await client.disconnect()
+                    return {'status': 'code_sent'}
+            else:
+                await client.disconnect()
+                return {'status': 'already_authenticated'}
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(flow())
+        return jsonify(result)
