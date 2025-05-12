@@ -74,4 +74,63 @@ def get_user():
             "username": user.username
         })
     except Exception as e:
-        return jsonify({"error": str(e)}) 
+        return jsonify({"error": str(e)})
+
+
+from flask import Blueprint, request, jsonify
+from app import client, loop
+import asyncio
+import logging
+import base64
+from telethon.tl.types import MessageMediaPhoto
+
+bp = Blueprint("media_routes", __name__)
+logger = logging.getLogger(__name__)
+
+@bp.route("/task_groups", methods=["POST"])
+def extract_media():
+    data = request.json
+    group_name_or_id = data.get("group_name_or_id")
+
+    if not group_name_or_id:
+        return jsonify({'error': 'Group name or ID is required'}), 400
+
+    future = asyncio.run_coroutine_threadsafe(
+        _extract_media_async(group_name_or_id), loop
+    )
+    try:
+        payload = future.result(timeout=30)
+        return jsonify(payload)
+    except Exception as e:
+        logger.error(f"Erro ao extrair mídia: {e}")
+        return jsonify({"error": str(e)}), 500
+
+async def _extract_media_async(group_name_or_id):
+    try:
+        chat = await client.get_entity(group_name_or_id)
+        logger.info(f"Fetched entity for group: {group_name_or_id}")
+    except Exception as e:
+        logger.error(f"Could not fetch group: {e}")
+        return {"error": f"Could not fetch group: {e}"}
+
+    payload = []
+    async for message in client.iter_messages(chat, reverse=False):
+        result = await _process_message_to_b64(message)
+        if result:
+            payload.append(result)
+
+    logger.info(f"Extracted {len(payload)} messages from group {group_name_or_id}")
+    return payload
+
+async def _process_message_to_b64(message):
+    if message.media and isinstance(message.media, MessageMediaPhoto):
+        try:
+            file_bytes = await client.download_media(message.media, file=bytes)
+            base64_str = base64.b64encode(file_bytes).decode('utf-8')
+            return {
+                "message_id": message.id,
+                "base64_image": base64_str
+            }
+        except Exception as e:
+            logger.warning(f"Erro ao processar imagem da mensagem {message.id}: {e}")
+    return None
